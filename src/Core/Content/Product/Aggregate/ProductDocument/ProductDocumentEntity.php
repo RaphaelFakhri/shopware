@@ -2,7 +2,6 @@
 
 namespace Shopware\Core\Content\Product\Aggregate\ProductDocument;
 
-use Shopware\Core\Content\Media\MediaEntity;
 use Shopware\Core\Content\Product\Aggregate\ProductDocumentTranslation\ProductDocumentTranslationCollection;
 use Shopware\Core\Content\Product\ProductEntity;
 use Shopware\Core\Framework\DataAbstractionLayer\Entity;
@@ -29,11 +28,7 @@ class ProductDocumentEntity extends Entity
 
     protected ?string $mediaId = null;
 
-    protected ?string $mediaLanguageId = null;
-
     protected ?ProductEntity $product = null;
-
-    protected ?MediaEntity $media = null;
 
     protected ?ProductDocumentTranslationCollection $translations = null;
 
@@ -87,16 +82,6 @@ class ProductDocumentEntity extends Entity
         $this->mediaId = $mediaId;
     }
 
-    public function getMediaLanguageId(): ?string
-    {
-        return $this->mediaLanguageId;
-    }
-
-    public function setMediaLanguageId(?string $mediaLanguageId): void
-    {
-        $this->mediaLanguageId = $mediaLanguageId;
-    }
-
     public function getProduct(): ?ProductEntity
     {
         return $this->product;
@@ -105,16 +90,6 @@ class ProductDocumentEntity extends Entity
     public function setProduct(ProductEntity $product): void
     {
         $this->product = $product;
-    }
-
-    public function getMedia(): ?MediaEntity
-    {
-        return $this->media;
-    }
-
-    public function setMedia(?MediaEntity $media): void
-    {
-        $this->media = $media;
     }
 
     public function getTranslations(): ?ProductDocumentTranslationCollection

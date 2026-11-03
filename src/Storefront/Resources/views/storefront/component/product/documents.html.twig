@@ -12,7 +12,7 @@
             {% block component_product_documents_list %}
                 <ul class="product-detail-documents-list list-unstyled">
                     {% for document in documents %}
-                        {% set media = document.media %}
+                        {% set media = documentMedia.get(document.translated.mediaId) %}
                         {% set opensInNewTab = media.mimeType == 'application/pdf' or media.mimeType starts with 'image/' %}
 
                         {% block component_product_documents_item %}

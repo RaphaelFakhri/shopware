@@ -3,15 +3,22 @@
 namespace Shopware\Core\Content\Product\Cms;
 
 use Shopware\Core\Content\Cms\Aggregate\CmsSlot\CmsSlotEntity;
-use Shopware\Core\Content\Cms\DataResolver\CriteriaCollection;
 use Shopware\Core\Content\Cms\DataResolver\Element\ElementDataCollection;
 use Shopware\Core\Content\Cms\DataResolver\ResolverContext\EntityResolverContext;
 use Shopware\Core\Content\Cms\DataResolver\ResolverContext\ResolverContext;
 use Shopware\Core\Content\Cms\SalesChannel\Struct\ProductDescriptionReviewsStruct;
+use Shopware\Core\Content\Media\MediaCollection;
+use Shopware\Core\Content\Product\Aggregate\ProductDocument\ProductDocumentCollection;
+use Shopware\Core\Content\Product\Aggregate\ProductDocument\ProductDocumentEntity;
 use Shopware\Core\Content\Product\SalesChannel\Review\AbstractProductReviewLoader;
 use Shopware\Core\Content\Product\SalesChannel\Review\ProductReviewsWidgetLoadedHook;
 use Shopware\Core\Content\Product\SalesChannel\SalesChannelProductEntity;
 use Shopware\Core\Framework\Adapter\Request\RequestParamHelper;
+use Shopware\Core\Framework\Context;
+use Shopware\Core\Framework\DataAbstractionLayer\EntityRepository;
+use Shopware\Core\Framework\DataAbstractionLayer\Search\Criteria;
+use Shopware\Core\Framework\DataAbstractionLayer\Search\Filter\EqualsAnyFilter;
+use Shopware\Core\Framework\DataAbstractionLayer\Search\Filter\EqualsFilter;
 use Shopware\Core\Framework\DataAbstractionLayer\Search\Sorting\FieldSorting;
 use Shopware\Core\Framework\Log\Package;
 use Shopware\Core\Framework\Script\Execution\ScriptExecutor;
@@ -24,31 +31,22 @@ class ProductDescriptionReviewsCmsElementResolver extends AbstractProductDetailC
 
     /**
      * @internal
+     *
+     * @param EntityRepository<ProductDocumentCollection> $productDocumentRepository
+     * @param EntityRepository<MediaCollection> $mediaRepository
      */
     public function __construct(
         private readonly AbstractProductReviewLoader $productReviewLoader,
         private readonly ScriptExecutor $scriptExecutor,
-        private readonly SystemConfigService $systemConfigService
+        private readonly SystemConfigService $systemConfigService,
+        private readonly EntityRepository $productDocumentRepository,
+        private readonly EntityRepository $mediaRepository,
     ) {
     }
 
     public function getType(): string
     {
         return self::TYPE;
-    }
-
-    public function collect(CmsSlotEntity $slot, ResolverContext $resolverContext): ?CriteriaCollection
-    {
-        $criteriaCollection = parent::collect($slot, $resolverContext);
-
-        // a product mapped from the page already comes with its documents from the product detail route
-        foreach ($criteriaCollection ?? [] as $criteriaList) {
-            foreach ($criteriaList as $criteria) {
-                $criteria->getAssociation('documents')->addSorting(new FieldSorting('position'));
-            }
-        }
-
-        return $criteriaCollection;
     }
 
     public function enrich(CmsSlotEntity $slot, ResolverContext $resolverContext, ElementDataCollection $result): void
@@ -81,6 +79,7 @@ class ProductDescriptionReviewsCmsElementResolver extends AbstractProductDetailC
         }
 
         $data->setProduct($product);
+        $this->addDocuments($data, $product, $resolverContext->getSalesChannelContext()->getContext());
 
         if ($this->systemConfigService->getBool('core.listing.showReview', $resolverContext->getSalesChannelContext()->getSalesChannelId())) {
             $reviews = $this->productReviewLoader->load($request, $resolverContext->getSalesChannelContext(), $product->getId(), $product->getParentId());
@@ -89,5 +88,50 @@ class ProductDescriptionReviewsCmsElementResolver extends AbstractProductDetailC
 
             $data->setReviews($reviews);
         }
+    }
+
+    /**
+     * Adds the documents of the product, or of its parent when the variant has none of its own, like the DAL inheritance.
+     * Each document gets the file of the first language of the context's language chain that has one (`translated.mediaId`).
+     * Documents without a public file are left out.
+     */
+    private function addDocuments(ProductDescriptionReviewsStruct $data, SalesChannelProductEntity $product, Context $context): void
+    {
+        $productIds = array_values(array_filter([$product->getId(), $product->getParentId()]));
+
+        $criteria = new Criteria();
+        $criteria->setTitle('cms::product-description-reviews-documents');
+        $criteria->addFilter(new EqualsAnyFilter('productId', $productIds));
+        $criteria->addSorting(new FieldSorting('position'));
+
+        $documents = $this->productDocumentRepository->search($criteria, $context)->getEntities();
+
+        $ownDocuments = $documents->filterByProperty('productId', $product->getId());
+        if ($ownDocuments->count() > 0) {
+            $documents = $ownDocuments;
+        }
+
+        $mediaIds = [];
+        foreach ($documents as $document) {
+            $mediaId = $document->getTranslation('mediaId');
+            if (\is_string($mediaId)) {
+                $mediaIds[] = $mediaId;
+            }
+        }
+
+        if ($mediaIds === []) {
+            return;
+        }
+
+        $mediaCriteria = new Criteria(array_values(array_unique($mediaIds)));
+        $mediaCriteria->setTitle('cms::product-description-reviews-document-media');
+        $mediaCriteria->addFilter(new EqualsFilter('private', false));
+
+        $media = $this->mediaRepository->search($mediaCriteria, $context)->getEntities();
+
+        $data->setDocuments($documents->filter(
+            static fn (ProductDocumentEntity $document): bool => \is_string($mediaId = $document->getTranslation('mediaId')) && $media->has($mediaId)
+        ));
+        $data->setDocumentMedia($media);
     }
 }

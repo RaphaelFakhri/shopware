@@ -141,7 +141,6 @@ use Shopware\Core\Content\Product\Stock\OrderStockSubscriber;
 use Shopware\Core\Content\Product\Stock\StockStorage;
 use Shopware\Core\Content\Product\Subscriber\CustomFieldSearchableSubscriber;
 use Shopware\Core\Content\Product\Subscriber\ProductDescriptionTeaserSubscriber;
-use Shopware\Core\Content\Product\Subscriber\ProductDocumentMediaSubscriber;
 use Shopware\Core\Content\Product\Subscriber\ProductSubscriber;
 use Shopware\Core\Content\Product\Subscriber\RepairDigitalProductStatesSubscriber;
 use Shopware\Core\Content\Product\Util\VariantCombinationLoader;
@@ -377,13 +376,6 @@ return static function (ContainerConfigurator $containerConfigurator): void {
         ])
         ->tag('kernel.event_subscriber');
 
-    $services->set(ProductDocumentMediaSubscriber::class)
-        ->args([
-            service('media.repository'),
-            service('product_document_translation.repository'),
-        ])
-        ->tag('kernel.event_subscriber');
-
     $services->set(ProductDescriptionTeaserBuilder::class)
         ->args([
             service(HtmlSanitizer::class),
@@ -503,6 +495,8 @@ return static function (ContainerConfigurator $containerConfigurator): void {
             service(ProductReviewLoader::class),
             service(ScriptExecutor::class),
             service(SystemConfigService::class),
+            service('product_document.repository'),
+            service('media.repository'),
         ])
         ->tag('shopware.cms.data_resolver');
 

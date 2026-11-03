@@ -10,7 +10,7 @@
     {% set documentsTabId = 'documents-tab-' ~ product.id %}
     {% set documentsTabHref = '#documents-tab-' ~ product.id ~ '-pane' %}
     {% set documentsTabContent = 'documents-tab-' ~ product.id ~ '-pane' %}
-    {% set documents = (product.documents.elements ?? [])|filter(document => document.media is not null) %}
+    {% set documents = element.data.documents.elements ?? [] %}
 
     {% if product %}
         <div class="product-detail-tabs cms-element-{{ element.type }}{% if config.alignment.value %} has-vertical-alignment{% endif %}">
@@ -138,7 +138,8 @@
                                                  role="tabpanel"
                                                  aria-labelledby="{{ documentsTabId }}">
                                                 {% sw_include '@Storefront/storefront/component/product/documents.html.twig' with {
-                                                    documents: documents
+                                                    documents: documents,
+                                                    documentMedia: element.data.documentMedia
                                                 } %}
                                             </div>
                                         {% endif %}

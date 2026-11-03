@@ -10,19 +10,25 @@ use Shopware\Core\Content\Cms\DataResolver\FieldConfig;
 use Shopware\Core\Content\Cms\DataResolver\FieldConfigCollection;
 use Shopware\Core\Content\Cms\DataResolver\ResolverContext\ResolverContext;
 use Shopware\Core\Content\Cms\SalesChannel\Struct\ProductDescriptionReviewsStruct;
+use Shopware\Core\Content\Media\MediaCollection;
+use Shopware\Core\Content\Media\MediaEntity;
+use Shopware\Core\Content\Product\Aggregate\ProductDocument\ProductDocumentCollection;
+use Shopware\Core\Content\Product\Aggregate\ProductDocument\ProductDocumentEntity;
 use Shopware\Core\Content\Product\Cms\ProductDescriptionReviewsCmsElementResolver;
 use Shopware\Core\Content\Product\SalesChannel\Review\AbstractProductReviewRoute;
 use Shopware\Core\Content\Product\SalesChannel\Review\ProductReviewLoader;
 use Shopware\Core\Content\Product\SalesChannel\Review\ProductReviewResult;
 use Shopware\Core\Content\Product\SalesChannel\SalesChannelProductCollection;
-use Shopware\Core\Content\Product\SalesChannel\SalesChannelProductDefinition;
 use Shopware\Core\Content\Product\SalesChannel\SalesChannelProductEntity;
 use Shopware\Core\Framework\DataAbstractionLayer\Search\EntitySearchResult;
+use Shopware\Core\Framework\DataAbstractionLayer\Search\Filter\EqualsAnyFilter;
+use Shopware\Core\Framework\DataAbstractionLayer\Search\Filter\EqualsFilter;
 use Shopware\Core\Framework\DataAbstractionLayer\Search\Sorting\FieldSorting;
 use Shopware\Core\Framework\Log\Package;
 use Shopware\Core\Framework\Script\Execution\ScriptExecutor;
 use Shopware\Core\System\SalesChannel\SalesChannelContext;
 use Shopware\Core\Test\Generator;
+use Shopware\Core\Test\Stub\DataAbstractionLayer\StaticEntityRepository;
 use Shopware\Core\Test\Stub\SystemConfigService\StaticSystemConfigService;
 use Symfony\Component\EventDispatcher\EventDispatcher;
 use Symfony\Component\HttpFoundation\Request;
@@ -61,29 +67,6 @@ class ProductDescriptionReviewsCmsElementResolverTest extends TestCase
         $collection = $this->getResolver()->collect($slot, $resolverContext);
 
         static::assertNull($collection);
-    }
-
-    public function testCollectLoadsDocumentsOfStaticProduct(): void
-    {
-        $resolverContext = new ResolverContext(static::createStub(SalesChannelContext::class), new Request());
-
-        $fieldConfig = new FieldConfigCollection();
-        $fieldConfig->add(new FieldConfig('product', FieldConfig::SOURCE_STATIC, 'product-1'));
-
-        $slot = new CmsSlotEntity();
-        $slot->setUniqueIdentifier('id');
-        $slot->setType(ProductDescriptionReviewsCmsElementResolver::TYPE);
-        $slot->setFieldConfig($fieldConfig);
-
-        $collection = $this->getResolver()->collect($slot, $resolverContext);
-
-        static::assertNotNull($collection);
-        $criteria = $collection->all()[SalesChannelProductDefinition::class]['product_id'];
-        static::assertTrue($criteria->hasAssociation('documents'));
-        static::assertEquals(
-            [new FieldSorting('position')],
-            $criteria->getAssociation('documents')->getSorting()
-        );
     }
 
     public function testEnrichSlotWithProductDescriptionReviews(): void
@@ -273,8 +256,146 @@ class ProductDescriptionReviewsCmsElementResolverTest extends TestCase
         static::assertNull($data->getProduct());
     }
 
-    private function getResolver(): ProductDescriptionReviewsCmsElementResolver
+    public function testEnrichAddsTheDocumentsWithAPublicFile(): void
     {
+        $documentWithFile = $this->createDocument('document-1', 'product-1', 'media-1');
+        $documentWithPrivateFile = $this->createDocument('document-2', 'product-1', 'media-2');
+        $documentWithoutFile = $this->createDocument('document-3', 'product-1', null);
+
+        $productDocumentRepository = new StaticEntityRepository([
+            new ProductDocumentCollection([$documentWithFile, $documentWithPrivateFile, $documentWithoutFile]),
+        ]);
+        $mediaRepository = new StaticEntityRepository([new MediaCollection([$this->createMedia('media-1')])]);
+
+        $data = $this->enrichWithProduct($this->createProduct('product-1', null), $productDocumentRepository, $mediaRepository);
+
+        static::assertSame([$documentWithFile], array_values($data->getDocuments()?->getElements() ?? []));
+        static::assertSame(['media-1'], array_values($data->getDocumentMedia()?->getIds() ?? []));
+
+        $documentCriteria = $productDocumentRepository->searchedCriteria[0];
+        static::assertEquals([new EqualsAnyFilter('productId', ['product-1'])], $documentCriteria->getFilters());
+        static::assertEquals([new FieldSorting('position')], $documentCriteria->getSorting());
+
+        $mediaCriteria = $mediaRepository->searchedCriteria[0];
+        static::assertSame(['media-1', 'media-2'], $mediaCriteria->getIds());
+        static::assertEquals([new EqualsFilter('private', false)], $mediaCriteria->getFilters());
+    }
+
+    public function testEnrichPrefersTheOwnDocumentsOfAVariant(): void
+    {
+        $ownDocument = $this->createDocument('document-1', 'variant-1', 'media-1');
+        $parentDocument = $this->createDocument('document-2', 'parent-1', 'media-2');
+
+        $productDocumentRepository = new StaticEntityRepository([new ProductDocumentCollection([$parentDocument, $ownDocument])]);
+        $mediaRepository = new StaticEntityRepository([new MediaCollection([$this->createMedia('media-1')])]);
+
+        $data = $this->enrichWithProduct($this->createProduct('variant-1', 'parent-1'), $productDocumentRepository, $mediaRepository);
+
+        static::assertSame([$ownDocument], array_values($data->getDocuments()?->getElements() ?? []));
+        static::assertEquals(
+            [new EqualsAnyFilter('productId', ['variant-1', 'parent-1'])],
+            $productDocumentRepository->searchedCriteria[0]->getFilters()
+        );
+        static::assertSame(['media-1'], $mediaRepository->searchedCriteria[0]->getIds());
+    }
+
+    public function testEnrichInheritsTheDocumentsOfTheParent(): void
+    {
+        $parentDocument = $this->createDocument('document-1', 'parent-1', 'media-1');
+
+        $productDocumentRepository = new StaticEntityRepository([new ProductDocumentCollection([$parentDocument])]);
+        $mediaRepository = new StaticEntityRepository([new MediaCollection([$this->createMedia('media-1')])]);
+
+        $data = $this->enrichWithProduct($this->createProduct('variant-1', 'parent-1'), $productDocumentRepository, $mediaRepository);
+
+        static::assertSame([$parentDocument], array_values($data->getDocuments()?->getElements() ?? []));
+    }
+
+    public function testEnrichSkipsTheMediaSearchWithoutDocuments(): void
+    {
+        $mediaRepository = new StaticEntityRepository([]);
+
+        $data = $this->enrichWithProduct(
+            $this->createProduct('product-1', null),
+            new StaticEntityRepository([new ProductDocumentCollection()]),
+            $mediaRepository
+        );
+
+        static::assertNull($data->getDocuments());
+        static::assertNull($data->getDocumentMedia());
+        static::assertSame([], $mediaRepository->searchedCriteria);
+    }
+
+    /**
+     * @param StaticEntityRepository<ProductDocumentCollection> $productDocumentRepository
+     * @param StaticEntityRepository<MediaCollection> $mediaRepository
+     */
+    private function enrichWithProduct(
+        SalesChannelProductEntity $product,
+        StaticEntityRepository $productDocumentRepository,
+        StaticEntityRepository $mediaRepository,
+    ): ProductDescriptionReviewsStruct {
+        $this->systemConfigService->set('core.listing.showReview', false);
+
+        $slot = new CmsSlotEntity();
+        $slot->setId('slot-1');
+        $slot->setFieldConfig(new FieldConfigCollection([
+            new FieldConfig('product', FieldConfig::SOURCE_STATIC, $product->getParentId() ?? $product->getId()),
+        ]));
+
+        $result = static::createStub(EntitySearchResult::class);
+        $result->method('getEntities')->willReturn(new SalesChannelProductCollection([$product]));
+
+        $elementData = new ElementDataCollection();
+        $elementData->add('product_slot-1', $result);
+
+        $this->getResolver($productDocumentRepository, $mediaRepository)->enrich(
+            $slot,
+            new ResolverContext(Generator::generateSalesChannelContext(), new Request()),
+            $elementData
+        );
+
+        $data = $slot->getData();
+        static::assertInstanceOf(ProductDescriptionReviewsStruct::class, $data);
+
+        return $data;
+    }
+
+    private function createProduct(string $id, ?string $parentId): SalesChannelProductEntity
+    {
+        $product = new SalesChannelProductEntity();
+        $product->setId($id);
+        $product->setParentId($parentId);
+
+        return $product;
+    }
+
+    private function createDocument(string $id, string $productId, ?string $mediaId): ProductDocumentEntity
+    {
+        $document = new ProductDocumentEntity();
+        $document->setId($id);
+        $document->setProductId($productId);
+        $document->setTranslated(['mediaId' => $mediaId]);
+
+        return $document;
+    }
+
+    private function createMedia(string $id): MediaEntity
+    {
+        $media = new MediaEntity();
+        $media->setId($id);
+
+        return $media;
+    }
+
+    /**
+     * @param StaticEntityRepository<ProductDocumentCollection>|null $productDocumentRepository
+     * @param StaticEntityRepository<MediaCollection>|null $mediaRepository
+     */
+    private function getResolver(
+        ?StaticEntityRepository $productDocumentRepository = null,
+        ?StaticEntityRepository $mediaRepository = null,
+    ): ProductDescriptionReviewsCmsElementResolver {
         $productReviewLoader = new ProductReviewLoader(
             static::createStub(AbstractProductReviewRoute::class),
             $this->systemConfigService,
@@ -283,6 +404,12 @@ class ProductDescriptionReviewsCmsElementResolverTest extends TestCase
 
         $scriptExecutor = static::createStub(ScriptExecutor::class);
 
-        return new ProductDescriptionReviewsCmsElementResolver($productReviewLoader, $scriptExecutor, $this->systemConfigService);
+        return new ProductDescriptionReviewsCmsElementResolver(
+            $productReviewLoader,
+            $scriptExecutor,
+            $this->systemConfigService,
+            $productDocumentRepository ?? new StaticEntityRepository([new ProductDocumentCollection(), new ProductDocumentCollection()]),
+            $mediaRepository ?? new StaticEntityRepository([]),
+        );
     }
 }
