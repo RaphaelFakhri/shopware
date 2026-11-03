@@ -26,6 +26,14 @@ class IdentityRoleMapTest extends TestCase
         static::assertSame($integrationRoles, $owners->rolesFor('id', IdentityType::Integration));
     }
 
+    public function testAnAppsIntegrationHasItsIntegrationsRoles(): void
+    {
+        $roles = new AclRoles(false, ['app-role']);
+        $owners = new IdentityRoleMap([], ['id' => $roles]);
+
+        static::assertSame($roles, $owners->rolesFor('id', IdentityType::AppIntegration));
+    }
+
     public function testAnAppHasNoRoles(): void
     {
         $owners = new IdentityRoleMap([], ['id' => new AclRoles(false, ['role'])]);
