@@ -15,8 +15,10 @@ use Shopware\Core\Content\Product\SalesChannel\Review\AbstractProductReviewRoute
 use Shopware\Core\Content\Product\SalesChannel\Review\ProductReviewLoader;
 use Shopware\Core\Content\Product\SalesChannel\Review\ProductReviewResult;
 use Shopware\Core\Content\Product\SalesChannel\SalesChannelProductCollection;
+use Shopware\Core\Content\Product\SalesChannel\SalesChannelProductDefinition;
 use Shopware\Core\Content\Product\SalesChannel\SalesChannelProductEntity;
 use Shopware\Core\Framework\DataAbstractionLayer\Search\EntitySearchResult;
+use Shopware\Core\Framework\DataAbstractionLayer\Search\Sorting\FieldSorting;
 use Shopware\Core\Framework\Log\Package;
 use Shopware\Core\Framework\Script\Execution\ScriptExecutor;
 use Shopware\Core\System\SalesChannel\SalesChannelContext;
@@ -59,6 +61,29 @@ class ProductDescriptionReviewsCmsElementResolverTest extends TestCase
         $collection = $this->getResolver()->collect($slot, $resolverContext);
 
         static::assertNull($collection);
+    }
+
+    public function testCollectLoadsDocumentsOfStaticProduct(): void
+    {
+        $resolverContext = new ResolverContext(static::createStub(SalesChannelContext::class), new Request());
+
+        $fieldConfig = new FieldConfigCollection();
+        $fieldConfig->add(new FieldConfig('product', FieldConfig::SOURCE_STATIC, 'product-1'));
+
+        $slot = new CmsSlotEntity();
+        $slot->setUniqueIdentifier('id');
+        $slot->setType(ProductDescriptionReviewsCmsElementResolver::TYPE);
+        $slot->setFieldConfig($fieldConfig);
+
+        $collection = $this->getResolver()->collect($slot, $resolverContext);
+
+        static::assertNotNull($collection);
+        $criteria = $collection->all()[SalesChannelProductDefinition::class]['product_id'];
+        static::assertTrue($criteria->hasAssociation('documents'));
+        static::assertEquals(
+            [new FieldSorting('position')],
+            $criteria->getAssociation('documents')->getSorting()
+        );
     }
 
     public function testEnrichSlotWithProductDescriptionReviews(): void

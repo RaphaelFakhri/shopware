@@ -3,6 +3,7 @@
 namespace Shopware\Core\Content\Product\Cms;
 
 use Shopware\Core\Content\Cms\Aggregate\CmsSlot\CmsSlotEntity;
+use Shopware\Core\Content\Cms\DataResolver\CriteriaCollection;
 use Shopware\Core\Content\Cms\DataResolver\Element\ElementDataCollection;
 use Shopware\Core\Content\Cms\DataResolver\ResolverContext\EntityResolverContext;
 use Shopware\Core\Content\Cms\DataResolver\ResolverContext\ResolverContext;
@@ -11,6 +12,7 @@ use Shopware\Core\Content\Product\SalesChannel\Review\AbstractProductReviewLoade
 use Shopware\Core\Content\Product\SalesChannel\Review\ProductReviewsWidgetLoadedHook;
 use Shopware\Core\Content\Product\SalesChannel\SalesChannelProductEntity;
 use Shopware\Core\Framework\Adapter\Request\RequestParamHelper;
+use Shopware\Core\Framework\DataAbstractionLayer\Search\Sorting\FieldSorting;
 use Shopware\Core\Framework\Log\Package;
 use Shopware\Core\Framework\Script\Execution\ScriptExecutor;
 use Shopware\Core\System\SystemConfig\SystemConfigService;
@@ -33,6 +35,20 @@ class ProductDescriptionReviewsCmsElementResolver extends AbstractProductDetailC
     public function getType(): string
     {
         return self::TYPE;
+    }
+
+    public function collect(CmsSlotEntity $slot, ResolverContext $resolverContext): ?CriteriaCollection
+    {
+        $criteriaCollection = parent::collect($slot, $resolverContext);
+
+        // a product mapped from the page already comes with its documents from the product detail route
+        foreach ($criteriaCollection ?? [] as $criteriaList) {
+            foreach ($criteriaList as $criteria) {
+                $criteria->getAssociation('documents')->addSorting(new FieldSorting('position'));
+            }
+        }
+
+        return $criteriaCollection;
     }
 
     public function enrich(CmsSlotEntity $slot, ResolverContext $resolverContext, ElementDataCollection $result): void
