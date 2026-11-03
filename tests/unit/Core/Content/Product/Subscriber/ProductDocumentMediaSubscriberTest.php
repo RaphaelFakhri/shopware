@@ -1,6 +1,6 @@
 <?php declare(strict_types=1);
 
-namespace Shopware\Tests\Unit\Core\Content\Product\Aggregate\ProductDocument;
+namespace Shopware\Tests\Unit\Core\Content\Product\Subscriber;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -9,15 +9,16 @@ use Shopware\Core\Content\Media\MediaCollection;
 use Shopware\Core\Content\Media\MediaEntity;
 use Shopware\Core\Content\Product\Aggregate\ProductDocument\ProductDocumentDefinition;
 use Shopware\Core\Content\Product\Aggregate\ProductDocument\ProductDocumentEntity;
-use Shopware\Core\Content\Product\Aggregate\ProductDocument\ProductDocumentMediaSubscriber;
 use Shopware\Core\Content\Product\Aggregate\ProductDocumentTranslation\ProductDocumentTranslationCollection;
 use Shopware\Core\Content\Product\Aggregate\ProductDocumentTranslation\ProductDocumentTranslationEntity;
+use Shopware\Core\Content\Product\Subscriber\ProductDocumentMediaSubscriber;
 use Shopware\Core\Defaults;
 use Shopware\Core\Framework\Api\Context\SystemSource;
 use Shopware\Core\Framework\Context;
 use Shopware\Core\Framework\DataAbstractionLayer\Search\Filter\EqualsAnyFilter;
 use Shopware\Core\Framework\DataAbstractionLayer\Search\Filter\EqualsFilter;
 use Shopware\Core\Framework\Log\Package;
+use Shopware\Core\Framework\Uuid\Uuid;
 use Shopware\Core\System\SalesChannel\Entity\SalesChannelEntityLoadedEvent;
 use Shopware\Core\Test\Generator;
 use Shopware\Core\Test\Stub\DataAbstractionLayer\StaticEntityRepository;
@@ -39,9 +40,10 @@ class ProductDocumentMediaSubscriberTest extends TestCase
     #[DataProvider('fileLanguageProvider')]
     public function testTheFileGetsTheLanguageItComesFrom(array $languageChain, bool $ownFile, ?bool $parentHasFile, string $expectedLanguage): void
     {
-        $document = self::document('manual', 'file', $ownFile);
-        $translationRepository = new StaticEntityRepository(
-            $parentHasFile === null ? [] : [new ProductDocumentTranslationCollection([self::translation('manual', $parentHasFile ? 'file' : null)])],
+        $document = self::document(id: 'manual', file: 'file', ownFile: $ownFile);
+        $translationRepository = StaticEntityRepository::of(
+            ProductDocumentTranslationCollection::class,
+            $parentHasFile === null ? [] : [new ProductDocumentTranslationCollection([self::translation(documentId: 'manual', mediaId: $parentHasFile ? 'file' : null)])],
         );
 
         $this->dispatch([$document], new StaticEntityRepository([new MediaCollection([self::media('file')])]), $translationRepository, $languageChain);
@@ -61,44 +63,47 @@ class ProductDocumentMediaSubscriberTest extends TestCase
         yield 'the file of the default language when it is also the parent' => [[self::SWISS_GERMAN, Defaults::LANGUAGE_SYSTEM, Defaults::LANGUAGE_SYSTEM], false, null, Defaults::LANGUAGE_SYSTEM];
     }
 
-    public function testOneSearchLoadsTheFilesOfAllDocuments(): void
+    public function testOneSearchLoadsThePublicFilesOfAllDocuments(): void
     {
-        $manual = self::document('manual', 'file-a', true);
-        $datasheet = self::document('datasheet', 'file-b', true);
-        $certificate = self::document('certificate', 'file-a', true);
+        $manual = self::document(id: 'manual', file: 'file-a', ownFile: true);
+        $datasheet = self::document(id: 'datasheet', file: 'file-b', ownFile: true);
+        $certificate = self::document(id: 'certificate', file: 'file-a', ownFile: true);
         $mediaRepository = new StaticEntityRepository([new MediaCollection([self::media('file-a'), self::media('file-b')])]);
 
-        $this->dispatch([$manual, $datasheet, $certificate], $mediaRepository, new StaticEntityRepository([]), [self::GERMAN, Defaults::LANGUAGE_SYSTEM]);
+        $this->dispatch([$manual, $datasheet, $certificate], $mediaRepository, StaticEntityRepository::of(ProductDocumentTranslationCollection::class), [self::GERMAN, Defaults::LANGUAGE_SYSTEM]);
 
         static::assertCount(1, $mediaRepository->searchedCriteria);
         static::assertSame(['file-a', 'file-b'], $mediaRepository->searchedCriteria[0]->getIds());
+        static::assertEquals([new EqualsFilter('private', false)], $mediaRepository->searchedCriteria[0]->getFilters());
         static::assertSame(['file-a', 'file-b', 'file-a'], [$manual->getMedia()?->getId(), $datasheet->getMedia()?->getId(), $certificate->getMedia()?->getId()]);
     }
 
     public function testOnlyDocumentsWithoutAnOwnFileReadTheParentLanguage(): void
     {
+        $versionId = Uuid::randomHex();
         $translationRepository = new StaticEntityRepository([new ProductDocumentTranslationCollection()]);
 
         $this->dispatch(
-            [self::document('manual', 'file-a', true), self::document('datasheet', 'file-b', false)],
+            [self::document(id: 'manual', file: 'file-a', ownFile: true), self::document(id: 'datasheet', file: 'file-b', ownFile: false)],
             new StaticEntityRepository([new MediaCollection([self::media('file-a'), self::media('file-b')])]),
             $translationRepository,
             [self::SWISS_GERMAN, self::GERMAN, Defaults::LANGUAGE_SYSTEM],
+            $versionId,
         );
 
         static::assertCount(1, $translationRepository->searchedCriteria);
         static::assertEquals([
             new EqualsAnyFilter('productDocumentId', ['datasheet']),
-            new EqualsFilter('productDocumentVersionId', Defaults::LIVE_VERSION),
+            new EqualsFilter('productDocumentVersionId', $versionId),
             new EqualsFilter('languageId', self::GERMAN),
         ], $translationRepository->searchedCriteria[0]->getFilters());
     }
 
     public function testADocumentWhoseFileIsNotFoundStaysWithoutFile(): void
     {
-        $document = self::document('manual', 'private-file', true);
+        $document = self::document(id: 'manual', file: 'missing-file', ownFile: true);
 
-        $this->dispatch([$document], new StaticEntityRepository([new MediaCollection()]), new StaticEntityRepository([]), [Defaults::LANGUAGE_SYSTEM]);
+        $this->dispatch([$document], new StaticEntityRepository([new MediaCollection()]), StaticEntityRepository::of(ProductDocumentTranslationCollection::class), [Defaults::LANGUAGE_SYSTEM]);
 
         static::assertNull($document->getMedia());
         static::assertNull($document->getMediaLanguageId());
@@ -106,9 +111,14 @@ class ProductDocumentMediaSubscriberTest extends TestCase
 
     public function testNothingIsLoadedWithoutFiles(): void
     {
-        $mediaRepository = new StaticEntityRepository([]);
+        $mediaRepository = StaticEntityRepository::of(MediaCollection::class);
 
-        $this->dispatch([self::document('manual', null, false)], $mediaRepository, new StaticEntityRepository([]), [Defaults::LANGUAGE_SYSTEM]);
+        $this->dispatch(
+            [self::document(id: 'manual', file: null, ownFile: false)],
+            $mediaRepository,
+            StaticEntityRepository::of(ProductDocumentTranslationCollection::class),
+            [Defaults::LANGUAGE_SYSTEM],
+        );
 
         static::assertSame([], $mediaRepository->searchedCriteria);
     }
@@ -119,10 +129,15 @@ class ProductDocumentMediaSubscriberTest extends TestCase
      * @param StaticEntityRepository<ProductDocumentTranslationCollection> $translationRepository
      * @param non-empty-list<string> $languageChain
      */
-    private function dispatch(array $documents, StaticEntityRepository $mediaRepository, StaticEntityRepository $translationRepository, array $languageChain): void
-    {
+    private function dispatch(
+        array $documents,
+        StaticEntityRepository $mediaRepository,
+        StaticEntityRepository $translationRepository,
+        array $languageChain,
+        string $versionId = Defaults::LIVE_VERSION,
+    ): void {
         $context = Generator::generateSalesChannelContext(
-            baseContext: new Context(new SystemSource(), languageIdChain: $languageChain),
+            baseContext: new Context(new SystemSource(), languageIdChain: $languageChain, versionId: $versionId),
         );
 
         (new ProductDocumentMediaSubscriber($mediaRepository, $translationRepository))->addMedia(
