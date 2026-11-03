@@ -69,6 +69,42 @@ class ProductPageLoaderTest extends TestCase
         static::assertSame($reviews, json_decode($slot, true, 512, \JSON_THROW_ON_ERROR));
     }
 
+    public function testItLoadsTheDocumentsByPosition(): void
+    {
+        $productId = Uuid::randomHex();
+        $product = $this->getProductWithReviews($productId, $this->getCmsSlotConfig());
+        $product->setCmsPage($this->getCmsPage($product));
+
+        $routeCriteria = null;
+        $productDetailRoute = $this->createMock(ProductDetailRoute::class);
+        $productDetailRoute
+            ->expects($this->once())
+            ->method('load')
+            ->willReturnCallback(static function (string $id, Request $request, SalesChannelContext $context, Criteria $criteria) use (&$routeCriteria, $product): ProductDetailRouteResponse {
+                $routeCriteria = $criteria;
+
+                return new ProductDetailRouteResponse($product, null);
+            });
+
+        $systemConfigService = static::createStub(SystemConfigService::class);
+        $systemConfigService->method('getBool')->willReturn(false);
+
+        $productPageLoader = new ProductPageLoader(
+            static::createStub(GenericPageLoader::class),
+            static::createStub(EventDispatcherInterface::class),
+            $productDetailRoute,
+            static::createStub(EntityRepository::class),
+            $systemConfigService,
+            static::createStub(CategoryBreadcrumbBuilder::class)
+        );
+
+        $productPageLoader->load(new Request([], [], ['productId' => $productId]), $this->getSalesChannelContext());
+
+        static::assertInstanceOf(Criteria::class, $routeCriteria);
+        static::assertTrue($routeCriteria->hasAssociation('documents'));
+        static::assertEquals([new FieldSorting('position')], $routeCriteria->getAssociation('documents')->getSorting());
+    }
+
     /**
      * @deprecated tag:v6.8.0 - Remove with the BREADCRUMB_REWORK flag
      */

@@ -87,6 +87,10 @@ class ProductPageLoader
             new FieldSorting('position')
         );
 
+        $criteria->getAssociation('documents')->addSorting(
+            new FieldSorting('position')
+        );
+
         $this->eventDispatcher->dispatch(new ProductPageCriteriaEvent($productId, $criteria, $context));
 
         $result = $this->productDetailRoute->load($productId, $request, $context, $criteria);
