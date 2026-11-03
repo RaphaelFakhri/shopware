@@ -43,13 +43,12 @@
 
                                             {% if media.fileSize %}
                                                 {% set fileSize = media.fileSize %}
-                                                {% set localeCode = context.languageInfo.localeCode %}
 
                                                 {# Moves up a unit from 0.9 of it on, like the file sizes in the Administration #}
                                                 {% if fileSize >= 0.9 * 1024 * 1024 %}
-                                                    {% set fileInfo = fileInfo|merge([(fileSize / (1024 * 1024))|format_number({ fraction_digit: 1 }, locale: localeCode) ~ ' MB']) %}
+                                                    {% set fileInfo = fileInfo|merge([(fileSize / (1024 * 1024))|format_number({ fraction_digit: 1 }, locale=app.request.locale) ~ ' MB']) %}
                                                 {% elseif fileSize >= 0.9 * 1024 %}
-                                                    {% set fileInfo = fileInfo|merge([(fileSize / 1024)|format_number({ fraction_digit: 0 }, locale: localeCode) ~ ' KB']) %}
+                                                    {% set fileInfo = fileInfo|merge([(fileSize / 1024)|format_number({ fraction_digit: 0 }, locale=app.request.locale) ~ ' KB']) %}
                                                 {% else %}
                                                     {% set fileInfo = fileInfo|merge([fileSize ~ ' B']) %}
                                                 {% endif %}
